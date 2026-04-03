@@ -37,7 +37,7 @@ class TrendsDB:
                 "user":     cfg.get("user", "postgres"),
                 "password": cfg.get("password", ""),
             }
-            logger.info(f"DB mode: PostgreSQL | host={self._pg_dsn['host']} | db={self._pg_dsn['dbname']}")
+            logger.info(f"DB mode: PostgreSQL | host={cfg.get('host', 'localhost')} | db={cfg.get('name', 'trends_intel')}")
         else:
             self.db_path = Path(db_path)
             self.db_path.parent.mkdir(parents=True, exist_ok=True)

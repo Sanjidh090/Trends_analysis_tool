@@ -27,7 +27,7 @@ class ProxyRotator:
     Usage:
         rotator = ProxyRotator(["http://p1:8080", "http://p2:8080"], cooldown=300)
         proxy = rotator.get()          # returns next healthy proxy or None
-        rotator.mark_bad(proxy)        # sidelinesthe proxy for cooldown_seconds
+        rotator.mark_bad(proxy)        # sidelines the proxy for cooldown_seconds
     """
 
     def __init__(self, proxies: list, cooldown: int = 300):
@@ -52,7 +52,7 @@ class ProxyRotator:
         return proxy
 
     def mark_bad(self, proxy: str):
-        """Sidelinesthe proxy for cooldown_seconds."""
+        """Sidelines the proxy for cooldown_seconds."""
         if proxy:
             with self._lock:
                 self._bad[proxy] = time.time()
