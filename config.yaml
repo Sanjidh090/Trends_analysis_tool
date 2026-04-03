@@ -1,0 +1,143 @@
+# ============================================================
+#  Google Trends Intelligence Platform — Master Config
+# ============================================================
+
+# ── Geo Targets ─────────────────────────────────────────────
+geos:
+  # Middle East
+  - code: "SA"
+    name: "Saudi Arabia"
+    region: "Middle East"
+    tz: 180
+  - code: "AE"
+    name: "United Arab Emirates"
+    region: "Middle East"
+    tz: 240
+  - code: "EG"
+    name: "Egypt"
+    region: "Middle East"
+    tz: 120
+  - code: "QA"
+    name: "Qatar"
+    region: "Middle East"
+    tz: 180
+  - code: "KW"
+    name: "Kuwait"
+    region: "Middle East"
+    tz: 180
+  # Europe
+  - code: "CH"
+    name: "Switzerland"
+    region: "Europe"
+    tz: 60
+  - code: "DE"
+    name: "Germany"
+    region: "Europe"
+    tz: 60
+  - code: "FR"
+    name: "France"
+    region: "Europe"
+    tz: 60
+  - code: "GB"
+    name: "United Kingdom"
+    region: "Europe"
+    tz: 0
+  - code: "NL"
+    name: "Netherlands"
+    region: "Europe"
+    tz: 60
+  # Americas
+  - code: "US"
+    name: "United States"
+    region: "Americas"
+    tz: -300
+
+# ── Ad Platforms ────────────────────────────────────────────
+platforms:
+  google_ads:
+    enabled: true
+    intent_signals: ["buy", "price", "review", "near me", "how to", "best"]
+    ad_formats: ["search", "display", "shopping", "youtube"]
+    cpc_sensitivity: "high"          # how much trends affect CPM estimates
+
+  meta:
+    enabled: true
+    intent_signals: ["trending", "viral", "challenge", "tips", "ideas", "inspiration"]
+    ad_formats: ["feed", "stories", "reels", "carousel"]
+    audience_types: ["interest", "lookalike", "retargeting"]
+
+  tiktok:
+    enabled: true
+    intent_signals: ["trend", "viral", "challenge", "tutorial", "hack", "duet"]
+    ad_formats: ["in_feed", "topview", "branded_hashtag", "spark_ads"]
+    min_trend_velocity: 50           # only flag if score > 50 for TikTok
+
+  youtube:
+    enabled: true
+    intent_signals: ["how to", "review", "unboxing", "tutorial", "vlog", "vs"]
+    ad_formats: ["skippable", "non_skippable", "bumper", "masthead"]
+
+# ── Trend Collection Settings ───────────────────────────────
+collection:
+  timeframes:
+    - "now 1-d"         # last 24 hours
+    - "now 7-d"         # last 7 days
+    - "today 1-m"       # last month
+    - "today 3-m"       # last 3 months
+
+  categories:           # Google Trends category IDs
+    all: 0
+    business: 12
+    entertainment: 3
+    health: 45
+    sports: 20
+    technology: 5
+    travel: 67
+    fashion: 185
+
+  keywords_seed:        # Starting seed keywords — expand per use-case
+    - "openclaw services"
+    - "Web development"
+    - "travel deals"
+    - "fitness"
+    - "food delivery"
+    - "gaming"
+    - "AI automation tool"
+    - "AI tools"
+
+  rate_limit:
+    requests_per_minute: 10
+    backoff_seconds: 60
+    max_retries: 3
+
+# ── Signal Processing ───────────────────────────────────────
+signals:
+  breakout_threshold: 70        # interest score above this = breakout
+  momentum_window_days: 7       # days to compute momentum
+  seasonality_min_periods: 52   # weeks needed for seasonality detection
+  correlation_threshold: 0.75   # min r-value to flag keyword pairs
+
+# ── Alerting ────────────────────────────────────────────────
+alerts:
+  slack_webhook: ""             # fill in your webhook URL
+  email:
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    from_addr: ""
+    to_addrs: []
+  alert_on:
+    - breakout_detected
+    - competitor_spike
+    - weekly_report_ready
+
+# ── Storage ─────────────────────────────────────────────────
+storage:
+  db_path: "storage/trends.db"
+  export_dir: "reports/exports"
+  log_dir: "logs"
+
+# ── Scheduler ───────────────────────────────────────────────
+scheduler:
+  daily_collection: "06:00"      # UTC
+  weekly_report: "Monday 07:00"  # UTC
+  breakout_check_interval_min: 30
