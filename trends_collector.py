@@ -9,12 +9,68 @@ Core pytrends wrapper with:
 
 import time
 import logging
+import threading
 from typing import Optional
 import pandas as pd
 from pytrends.request import TrendReq
 from pytrends.exceptions import TooManyRequestsError
 
 logger = logging.getLogger(__name__)
+
+
+# ── Proxy Rotator ──────────────────────────────────────────────────────────────
+
+class ProxyRotator:
+    """
+    Round-robin proxy rotator with per-proxy cooldown after HTTP 429.
+
+    Usage:
+        rotator = ProxyRotator(["http://p1:8080", "http://p2:8080"], cooldown=300)
+        proxy = rotator.get()          # returns next healthy proxy or None
+        rotator.mark_bad(proxy)        # sidelinesthe proxy for cooldown_seconds
+    """
+
+    def __init__(self, proxies: list, cooldown: int = 300):
+        self._proxies  = list(proxies)
+        self._cooldown = cooldown
+        self._bad: dict[str, float] = {}   # proxy -> timestamp when it went bad
+        self._lock = threading.Lock()
+        self._idx  = 0
+
+    def get(self) -> Optional[str]:
+        """Return the next healthy proxy, or None if none are available."""
+        if not self._proxies:
+            return None
+        with self._lock:
+            now = time.time()
+            healthy = [p for p in self._proxies
+                       if now - self._bad.get(p, 0) >= self._cooldown]
+            if not healthy:
+                return None
+            proxy = healthy[self._idx % len(healthy)]
+            self._idx += 1
+        return proxy
+
+    def mark_bad(self, proxy: str):
+        """Sidelinesthe proxy for cooldown_seconds."""
+        if proxy:
+            with self._lock:
+                self._bad[proxy] = time.time()
+            logger.warning(f"Proxy marked bad (cooling down): {proxy}")
+
+    def status(self) -> list[dict]:
+        """Return health status for all proxies (for display in Settings page)."""
+        now = time.time()
+        result = []
+        for p in self._proxies:
+            bad_since = self._bad.get(p, 0)
+            remaining = max(0, self._cooldown - (now - bad_since))
+            result.append({
+                "proxy":      p,
+                "healthy":    remaining == 0,
+                "cooldown_remaining_s": int(remaining),
+            })
+        return result
 
 
 class TrendsCollector:
@@ -163,3 +219,26 @@ class TrendsCollector:
         profile["related_topics"]     = self.related_topics(keywords)
         profile["suggestions"]        = {kw: self.suggestions(kw) for kw in keywords}
         return profile
+
+    def get_share_of_search(
+        self,
+        keywords: list,
+        category: int = 0,
+    ) -> pd.DataFrame:
+        """
+        Compute share-of-search: each keyword's interest as a % of the total
+        interest across all keywords in the list.
+
+        Returns a DataFrame indexed by date with one column per keyword,
+        values are percentages (0–100).  Returns empty DataFrame on failure.
+        """
+        df = self.interest_over_time(keywords, category)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        cols = [c for c in df.columns if c in keywords]
+        if not cols:
+            return pd.DataFrame()
+        row_totals = df[cols].sum(axis=1).replace(0, float("nan"))
+        share = df[cols].div(row_totals, axis=0).mul(100).round(2)
+        logger.info(f"Share-of-search computed | keywords={keywords} | geo={self.geo}")
+        return share

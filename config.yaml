@@ -138,6 +138,41 @@ storage:
 
 # ── Scheduler ───────────────────────────────────────────────
 scheduler:
+  type: "apscheduler"            # apscheduler | airflow
   daily_collection: "06:00"      # UTC
   weekly_report: "Monday 07:00"  # UTC
   breakout_check_interval_min: 30
+
+# ── Competitor Tracking ─────────────────────────────────────
+competitors:
+  # Map each seed keyword to its competitor keywords for share-of-search
+  "Web development":    ["app development", "software development"]
+  "food delivery":      ["uber eats", "doordash", "deliveroo"]
+  "AI tools":           ["chatgpt", "claude ai", "gemini ai"]
+  "fitness":            ["gym membership", "home workout", "yoga"]
+
+# ── OpenAI / GPT Ad Copy ────────────────────────────────────
+openai:
+  api_key: ""                    # set your OpenAI API key here
+  model: "gpt-4o"
+  max_tokens: 512
+
+# ── Proxy Rotation ──────────────────────────────────────────
+proxy:
+  enabled: false
+  proxies: []                    # list of "http://host:port" strings
+  cooldown_seconds: 300          # how long a 429'd proxy is sidelined
+
+# ── Database ────────────────────────────────────────────────
+database:
+  type: "sqlite"                 # sqlite | postgres
+  host: "localhost"
+  port: 5432
+  name: "trends_intel"
+  user: "postgres"
+  password: ""
+
+# ── TikTok Creative Center API ──────────────────────────────
+tiktok_api:
+  access_token: ""               # TikTok Creative Center API access token
+  region: "US"                   # default region for trending data

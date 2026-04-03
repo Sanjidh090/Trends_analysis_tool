@@ -182,3 +182,56 @@ def classify_all(df: pd.DataFrame, geo: str = "GLOBAL") -> pd.DataFrame:
         rec["keyword"] = col
         records.append(rec)
     return pd.DataFrame(records).set_index("keyword")
+
+
+# ── Competitor Share-of-Search ────────────────────────────────────────────────
+
+def classify_share_shift(
+    sos_df: pd.DataFrame,
+    brand_keyword: str,
+    window: int = 7,
+) -> list:
+    """
+    Detect crossover events where a competitor's share surpasses the brand's share.
+
+    Parameters
+    ----------
+    sos_df         : DataFrame of share-of-search percentages (date index, keyword columns).
+    brand_keyword  : The column representing your brand.
+    window         : Rolling window (rows) used to smooth before comparison.
+
+    Returns a list of dicts, one per crossover event detected:
+        {competitor, crossover_date, brand_share, competitor_share, direction}
+    """
+    if sos_df.empty or brand_keyword not in sos_df.columns:
+        return []
+
+    smoothed = sos_df.rolling(window=window, min_periods=1).mean()
+    brand    = smoothed[brand_keyword]
+    events   = []
+
+    for competitor in smoothed.columns:
+        if competitor == brand_keyword:
+            continue
+        comp = smoothed[competitor]
+        # Detect sign changes: where competitor crosses brand
+        diff = comp - brand
+        for i in range(1, len(diff)):
+            if diff.iloc[i - 1] < 0 and diff.iloc[i] >= 0:
+                events.append({
+                    "competitor":       competitor,
+                    "crossover_date":   str(diff.index[i])[:10],
+                    "brand_share":      round(float(brand.iloc[i]), 2),
+                    "competitor_share": round(float(comp.iloc[i]), 2),
+                    "direction":        "competitor_overtook_brand",
+                })
+            elif diff.iloc[i - 1] >= 0 and diff.iloc[i] < 0:
+                events.append({
+                    "competitor":       competitor,
+                    "crossover_date":   str(diff.index[i])[:10],
+                    "brand_share":      round(float(brand.iloc[i]), 2),
+                    "competitor_share": round(float(comp.iloc[i]), 2),
+                    "direction":        "brand_recaptured_lead",
+                })
+
+    return sorted(events, key=lambda e: e["crossover_date"], reverse=True)

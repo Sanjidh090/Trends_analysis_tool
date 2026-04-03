@@ -30,7 +30,7 @@ def job_breakout_check():
     from signal_processor import detect_breakout
     from report_generator import ReportGenerator
     cfg      = load_config()
-    db       = TrendsDB(cfg["storage"]["db_path"])
+    db       = TrendsDB(cfg["storage"]["db_path"], db_config=cfg.get("database", {}))
     reporter = ReportGenerator(config_path=CONFIG_PATH)
     webhook  = cfg["alerts"].get("slack_webhook", "")
 
@@ -60,7 +60,7 @@ def job_weekly_report():
     from targeting_engine import full_platform_brief
     from report_generator import ReportGenerator
     cfg      = load_config()
-    db       = TrendsDB(cfg["storage"]["db_path"])
+    db       = TrendsDB(cfg["storage"]["db_path"], db_config=cfg.get("database", {}))
     reporter = ReportGenerator(config_path=CONFIG_PATH)
 
     all_cls, all_briefs = [], []

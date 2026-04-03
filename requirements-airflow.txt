@@ -1,0 +1,10 @@
+# requirements-airflow.txt
+# Install this alongside requirements.txt when using Apache Airflow scheduling.
+# Recommended: use a dedicated virtualenv or Docker image for Airflow.
+#
+# Usage:
+#   pip install -r requirements.txt -r requirements-airflow.txt
+#   airflow db init
+#   airflow dags list
+
+apache-airflow>=2.8.0

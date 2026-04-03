@@ -5,15 +5,18 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import json
 import yaml
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
 from db import TrendsDB
-from signal_processor import classify_all, find_correlated_pairs
+from signal_processor import classify_all, find_correlated_pairs, classify_share_shift
 from targeting_engine import full_platform_brief
 from trends_collector import TrendsCollector
+from copy_generator import generate_ad_copy, is_configured as gpt_is_configured
+from tiktok_enricher import is_configured as tiktok_is_configured
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
 
@@ -27,7 +30,7 @@ def load_config():
 @st.cache_resource
 def get_db():
     cfg = load_config()
-    return TrendsDB(cfg["storage"]["db_path"])
+    return TrendsDB(cfg["storage"]["db_path"], db_config=cfg.get("database", {}))
 
 cfg = load_config()
 db  = get_db()
@@ -35,7 +38,7 @@ db  = get_db()
 st.sidebar.title("📊 Trends Intel")
 page = st.sidebar.radio("Navigate", [
     "🏠 Overview", "📈 Trends", "🗺 Geo Map",
-    "🎯 Ads Brief", "🔍 Keyword Tool", "⚙️ Settings"
+    "🎯 Ads Brief", "🏆 Competitor", "🔍 Keyword Tool", "⚙️ Settings"
 ])
 
 all_geos      = [g["code"] for g in cfg["geos"]]
@@ -112,16 +115,122 @@ elif page == "🎯 Ads Brief":
     trend_lbl = st.selectbox("Trend Signal", ["breakout","rising","stable","falling","seasonal"])
     momentum  = st.slider("Momentum Score", -100, 100, 25)
     if st.button("⚡ Generate Brief"):
-        brief = full_platform_brief(keyword, trend_lbl, momentum, geo)
+        brief = full_platform_brief(keyword, trend_lbl, momentum, geo, config=cfg)
         db.save_ad_brief(brief)
-        for tab, platform in zip(st.tabs(["Google Ads","Meta","TikTok","YouTube"]),
-                                 ["google_ads","meta","tiktok","youtube"]):
+        platform_keys  = ["google_ads", "meta", "tiktok", "youtube"]
+        platform_names = ["Google Ads", "Meta", "TikTok", "YouTube"]
+        gpt_available  = gpt_is_configured(cfg)
+        openai_model   = cfg.get("openai", {}).get("model", "gpt-4o")
+
+        for tab, platform, pname in zip(
+            st.tabs(platform_names), platform_keys, platform_names
+        ):
             with tab:
-                for k, v in brief["platforms"][platform].items():
-                    label = k.replace("_"," ").title()
-                    if isinstance(v, list):  st.write(f"**{label}:** {', '.join(str(i) for i in v)}")
-                    elif isinstance(v, bool): st.write(f"**{label}:** {'✅' if v else '❌'}")
-                    elif v is not None:       st.write(f"**{label}:** {v}")
+                pdata = brief["platforms"][platform]
+                for k, v in pdata.items():
+                    label = k.replace("_", " ").title()
+                    if k == "trending_sounds" and isinstance(v, list):
+                        st.markdown(f"**🎵 Trending Sounds** (TikTok Creative Center):")
+                        for s in v:
+                            st.write(f"- {s['title']} — {s['artist']}")
+                    elif isinstance(v, list):
+                        st.write(f"**{label}:** {', '.join(str(i) for i in v)}")
+                    elif isinstance(v, bool):
+                        st.write(f"**{label}:** {'✅' if v else '❌'}")
+                    elif v is not None:
+                        st.write(f"**{label}:** {v}")
+
+                st.markdown("---")
+                if gpt_available:
+                    if st.button(f"✍️ Generate Copy ({pname})", key=f"copy_{platform}"):
+                        with st.spinner("Generating ad copy with GPT..."):
+                            copy = generate_ad_copy(pdata, platform, cfg)
+                        if copy:
+                            db.save_ad_copy(keyword, geo, platform, copy, model=openai_model)
+                            st.success("Ad copy generated!")
+                            st.text_area("Headline", copy.get("headline", ""), key=f"hl_{platform}")
+                            st.text_area("Body",     copy.get("body",     ""), key=f"bd_{platform}")
+                            st.text_area("CTA",      copy.get("cta",      ""), key=f"cta_{platform}")
+                            tags = copy.get("hashtags", [])
+                            if tags:
+                                st.write("**Hashtags:** " + "  ".join(f"`{h}`" for h in tags))
+                        else:
+                            st.error("Copy generation failed. Check OpenAI API key and logs.")
+                else:
+                    st.caption("💡 Add your OpenAI API key in config.yaml to enable ✍️ Generate Copy")
+
+    # Show ad copy history
+    st.markdown("---")
+    st.subheader("📚 Ad Copy History")
+    hist_kw  = st.selectbox("Keyword (history)", seed_keywords, key="hist_kw")
+    hist_geo = st.selectbox("Geo (history)", all_geos, key="hist_geo")
+    history  = db.get_ad_copy_history(hist_kw, hist_geo)
+    if not history.empty:
+        st.dataframe(history, use_container_width=True)
+    else:
+        st.caption("No copy generated yet for this keyword/geo.")
+
+# ── Competitor ────────────────────────────────────────────────────────────────
+elif page == "🏆 Competitor":
+    st.title("🏆 Competitor Share-of-Search")
+    competitor_map = cfg.get("competitors", {})
+
+    if not competitor_map:
+        st.warning("No competitors configured. Add a `competitors:` section to config.yaml.")
+    else:
+        brand_kw = st.selectbox("Your Brand Keyword", list(competitor_map.keys()))
+        geo      = st.selectbox("Geo", all_geos)
+        days     = st.slider("History (days)", 30, 180, 90)
+
+        all_kws = [brand_kw] + list(competitor_map[brand_kw])
+
+        st.subheader("📊 Stored Share-of-Search")
+        sos_df = db.get_share_of_search_history(all_kws, geo, days=days)
+
+        if not sos_df.empty:
+            fig = px.area(sos_df, title=f"Share of Search — {brand_kw} vs competitors ({geo})",
+                          labels={"value": "Share (%)", "variable": "Keyword"},
+                          color_discrete_sequence=px.colors.qualitative.Set2)
+            st.plotly_chart(fig, use_container_width=True)
+
+            events = classify_share_shift(sos_df, brand_kw)
+            if events:
+                st.subheader("⚠️ Crossover Events")
+                st.dataframe(pd.DataFrame(events), use_container_width=True)
+            else:
+                st.success("No crossover events detected in this period.")
+
+            st.subheader("Per-Geo Competitor Comparison")
+            geo_shares = []
+            for g in all_geos:
+                gdf = db.get_share_of_search_history(all_kws, g, days=days)
+                if not gdf.empty:
+                    latest = gdf.iloc[-1].rename(g)
+                    geo_shares.append(latest)
+            if geo_shares:
+                geo_share_df = pd.DataFrame(geo_shares)
+                st.dataframe(geo_share_df.style.format("{:.1f}%"), use_container_width=True)
+        else:
+            st.info("No stored share-of-search data yet.")
+
+        st.markdown("---")
+        st.subheader("🔄 Fetch Live Share-of-Search")
+        timeframe = st.selectbox("Timeframe", ["now 7-d", "today 1-m", "today 3-m"])
+        if st.button("📡 Fetch & Save Live Data"):
+            with st.spinner("Fetching from Google Trends..."):
+                try:
+                    collector = TrendsCollector(geo=geo, timeframe=timeframe)
+                    sos = collector.get_share_of_search(all_kws)
+                    if not sos.empty:
+                        db.save_share_of_search(sos, geo, timeframe)
+                        st.success(f"Saved {len(sos)} rows of share-of-search data.")
+                        fig2 = px.area(sos, title=f"Live Share of Search — {brand_kw} ({geo})",
+                                       labels={"value": "Share (%)", "variable": "Keyword"})
+                        st.plotly_chart(fig2, use_container_width=True)
+                    else:
+                        st.warning("No data returned from Google Trends.")
+                except Exception as e:
+                    st.error(f"API Error: {e}")
 
 # ── Keyword Tool ──────────────────────────────────────────────────────────────
 elif page == "🔍 Keyword Tool":
@@ -160,3 +269,34 @@ elif page == "⚙️ Settings":
     st.json(cfg["alerts"])
     st.subheader("Rate Limits")
     st.json(cfg["collection"]["rate_limit"])
+
+    # Proxy status
+    st.subheader("🔄 Proxy Status")
+    proxy_cfg  = cfg.get("proxy", {})
+    if proxy_cfg.get("enabled") and proxy_cfg.get("proxies"):
+        from trends_collector import ProxyRotator
+        rotator = ProxyRotator(proxy_cfg["proxies"], cooldown=proxy_cfg.get("cooldown_seconds", 300))
+        proxy_status = rotator.status()
+        st.dataframe(pd.DataFrame(proxy_status), use_container_width=True)
+    else:
+        st.info("Proxy rotation is disabled. Enable it in config.yaml under `proxy:`.")
+
+    # Database info
+    st.subheader("🐘 Database Config")
+    db_cfg = cfg.get("database", {"type": "sqlite"})
+    st.json({"type": db_cfg.get("type", "sqlite"), "host": db_cfg.get("host", "N/A"),
+             "name": db_cfg.get("name", "N/A")})
+
+    # GPT status
+    st.subheader("🤖 GPT Ad Copy")
+    if gpt_is_configured(cfg):
+        st.success(f"OpenAI configured | model: {cfg['openai'].get('model','gpt-4o')}")
+    else:
+        st.warning("OpenAI not configured. Add `openai.api_key` to config.yaml.")
+
+    # TikTok API status
+    st.subheader("🎵 TikTok Creative Center API")
+    if tiktok_is_configured(cfg):
+        st.success(f"TikTok API configured | region: {cfg['tiktok_api'].get('region','US')}")
+    else:
+        st.warning("TikTok API not configured. Add `tiktok_api.access_token` to config.yaml.")
