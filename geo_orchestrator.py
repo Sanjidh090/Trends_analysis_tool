@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Optional
 import pandas as pd
 
-from trends_collector import TrendsCollector   # flat import
-from db import TrendsDB                        # flat import
+from trends_collector import TrendsCollector, ProxyRotator   # flat import
+from db import TrendsDB                                       # flat import
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,25 @@ class GeoOrchestrator:
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
         self.geos     = self.config["geos"]
-        self.db       = TrendsDB(self.config["storage"]["db_path"])
         self.rate_cfg = self.config["collection"]["rate_limit"]
+
+        db_config = self.config.get("database", {})
+        self.db   = TrendsDB(
+            db_path=self.config["storage"]["db_path"],
+            db_config=db_config,
+        )
+
+        # Initialise proxy rotator if proxies are configured
+        proxy_cfg  = self.config.get("proxy", {})
+        proxy_list = proxy_cfg.get("proxies", []) if proxy_cfg.get("enabled") else []
+        cooldown   = proxy_cfg.get("cooldown_seconds", 300)
+        self.rotator = ProxyRotator(proxy_list, cooldown=cooldown) if proxy_list else None
+
+    def _make_collector(self, geo_code: str, timeframe: str, tz: int) -> TrendsCollector:
+        """Build a TrendsCollector, injecting a proxy from the rotator when available."""
+        proxy = self.rotator.get() if self.rotator else None
+        proxies = [proxy] if proxy else []
+        return TrendsCollector(geo=geo_code, timeframe=timeframe, tz=tz, proxies=proxies)
 
     def run(self, keywords: list, timeframes: Optional[list] = None,
             category: int = 0, skip_geos: Optional[list] = None) -> dict:
@@ -41,7 +58,7 @@ class GeoOrchestrator:
             logger.info(f"Collecting | geo={code} ({geo['name']}) | keywords={keywords}")
 
             for tf in timeframes:
-                collector = TrendsCollector(geo=code, timeframe=tf, tz=geo.get("tz", 0))
+                collector = self._make_collector(code, tf, geo.get("tz", 0))
 
                 iot = collector.interest_over_time(keywords, category)
                 if not iot.empty:
@@ -76,7 +93,7 @@ class GeoOrchestrator:
             country = country_map.get(code)
             if not country:
                 continue
-            collector = TrendsCollector(geo=code, tz=geo.get("tz", 0))
+            collector = self._make_collector(code, "now 1-d", geo.get("tz", 0))
             df = collector.trending_searches(country=country)
             if not df.empty:
                 trending[code] = df

@@ -8,32 +8,30 @@ actionable ad targeting insights across **Google Ads, Meta, TikTok, and YouTube*
 ## 🗂️ Project Structure
 
 ```
-trends_intel/
-├── config.yaml              ← Master config: geos, keywords, platforms, alerts
-├── main.py                  ← CLI entry point
-├── requirements.txt
+Trends_analysis_tool/
+├── config.yaml              ← Master config: geos, keywords, platforms, alerts, proxies, DB, OpenAI, TikTok API
+├── main.py                  ← CLI entry point (collect | scheduler | migrate)
+├── requirements.txt         ← Core dependencies
+├── requirements-airflow.txt ← Airflow-specific dependencies
 │
-├── collector/
-│   ├── trends_collector.py  ← pytrends wrapper (rate limiting, retry, backoff)
-│   └── geo_orchestrator.py  ← Multi-geo collection runner
+├── trends_collector.py      ← pytrends wrapper + ProxyRotator
+├── geo_orchestrator.py      ← Multi-geo collection runner (proxy-aware)
+├── signal_processor.py      ← Momentum, breakout, seasonality, correlation, share-shift
+├── targeting_engine.py      ← Platform-specific ad recommendations (all 4 platforms + TikTok enrichment)
+├── report_generator.py      ← Excel weekly brief, Slack/email alerting
+├── jobs.py                  ← APScheduler daily + weekly + breakout jobs
+├── app.py                   ← Streamlit dashboard (7 pages)
+├── db.py                    ← SQLite / PostgreSQL persistence layer
+├── copy_generator.py        ← GPT-powered ad copy generation (OpenAI)
+├── tiktok_enricher.py       ← TikTok Creative Center API integration
 │
-├── signals/
-│   └── signal_processor.py  ← Momentum, breakout, seasonality, correlation
-│
-├── ads_intel/
-│   └── targeting_engine.py  ← Platform-specific ad recommendations (all 4 platforms)
-│
-├── reports/
-│   └── report_generator.py  ← Excel weekly brief, Slack/email alerting
-│
-├── scheduler/
-│   └── jobs.py              ← APScheduler daily + weekly + breakout jobs
-│
-├── dashboard/
-│   └── app.py               ← Streamlit dashboard (6 pages)
+├── dags/                    ← Apache Airflow DAGs (production scheduling)
+│   ├── daily_collection_dag.py
+│   ├── breakout_check_dag.py
+│   └── weekly_report_dag.py
 │
 └── storage/
-    └── db.py                ← SQLite persistence layer
+    └── trends.db            ← SQLite database (default)
 ```
 
 ---
@@ -58,7 +56,7 @@ python main.py --mode collect --keywords "fashion,smartphones,gaming" --geo US
 
 ### 4. Launch the dashboard
 ```bash
-streamlit run dashboard/app.py
+streamlit run app.py
 ```
 
 ### 5. Start the automated scheduler
@@ -113,11 +111,128 @@ Add more geos in `config.yaml` using ISO 2-letter country codes.
 
 ---
 
-## 🛠️ Next Steps to Build Out
+## 🏆 Competitor Tracking / Share-of-Search
 
-1. **Proxy rotation** — add `proxies` list to `TrendsCollector` for heavy usage
-2. **PostgreSQL** — swap `storage/db.py` SQLite for Postgres for team use
-3. **Airflow** — replace APScheduler with Airflow DAGs for production scheduling
-4. **Competitor tracking** — add competitor brand keywords to config and compare share-of-search
-5. **GPT-powered ad copy** — pipe `full_platform_brief()` output to LLM for auto-draft ad copy
-6. **TikTok Creative Center API** — enrich TikTok recommendations with real trending audio data
+Map your brand keywords to competitors in `config.yaml`:
+
+```yaml
+competitors:
+  "AI tools": ["chatgpt", "claude ai", "gemini ai"]
+  "fitness":  ["gym membership", "home workout", "yoga"]
+```
+
+Then visit the **🏆 Competitor** page in the dashboard to:
+- Fetch live share-of-search from Google Trends
+- View stacked area charts of share over time
+- See crossover alerts (when a competitor overtakes your brand)
+- Compare share per geo
+
+---
+
+## 🤖 GPT-Powered Ad Copy
+
+Add your OpenAI key to `config.yaml`:
+
+```yaml
+openai:
+  api_key: "sk-..."
+  model: "gpt-4o"
+  max_tokens: 512
+```
+
+Then click **✍️ Generate Copy** on the **🎯 Ads Brief** page to auto-generate
+platform-specific ad copy (headline, body, CTA, hashtags) for each platform.
+
+---
+
+## 🔄 Proxy Rotation
+
+For high-volume scraping across many geos/keywords, configure proxies:
+
+```yaml
+proxy:
+  enabled: true
+  proxies:
+    - "http://user:pass@proxy1:8080"
+    - "http://user:pass@proxy2:8080"
+  cooldown_seconds: 300
+```
+
+Proxy health is visible in the **⚙️ Settings** page.
+
+---
+
+## 🐘 PostgreSQL Setup
+
+By default the platform uses SQLite (zero-config). To switch to PostgreSQL:
+
+1. Create a Postgres database:
+   ```sql
+   CREATE DATABASE trends_intel;
+   ```
+
+2. Update `config.yaml`:
+   ```yaml
+   database:
+     type: "postgres"
+     host: "localhost"
+     port: 5432
+     name: "trends_intel"
+     user: "postgres"
+     password: "your_password"
+   ```
+
+3. Run the migration command to create the schema:
+   ```bash
+   python main.py --mode migrate
+   ```
+
+4. Install the Postgres driver (already in `requirements.txt`):
+   ```bash
+   pip install psycopg2-binary
+   ```
+
+---
+
+## ✈️ Airflow Production Scheduling
+
+For production use, replace APScheduler with Apache Airflow:
+
+1. Install Airflow:
+   ```bash
+   pip install -r requirements-airflow.txt
+   airflow db init
+   ```
+
+2. Point Airflow at the `dags/` folder:
+   ```bash
+   export AIRFLOW__CORE__DAGS_FOLDER=/path/to/Trends_analysis_tool/dags
+   airflow dags list
+   ```
+
+3. Update `config.yaml`:
+   ```yaml
+   scheduler:
+     type: "airflow"
+   ```
+
+The APScheduler (`python main.py --mode scheduler`) remains available for local/dev use.
+
+---
+
+## 🎵 TikTok Creative Center API
+
+Enrich TikTok recommendations with live trending hashtags and sounds:
+
+1. Obtain a TikTok Business API access token from [TikTok for Business](https://business.tiktok.com/).
+
+2. Update `config.yaml`:
+   ```yaml
+   tiktok_api:
+     access_token: "your_token"
+     region: "US"
+   ```
+
+When configured, the **🎯 Ads Brief → TikTok** tab will show live trending sounds
+and the hashtag strategy will be populated from real Creative Center data.
+

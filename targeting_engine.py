@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Optional
 import pandas as pd
 
+from tiktok_enricher import get_trending_hashtags, get_trending_sounds, is_configured as tiktok_is_configured
+
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 
 # ── Intent Classification ─────────────────────────────────────────────────────
@@ -195,6 +197,7 @@ def tiktok_recommendations(
     trend_label: str,
     momentum: float,
     geo: str,
+    config: Optional[dict] = None,
 ) -> dict:
     """Generate TikTok ad and content strategy recommendations."""
 
@@ -214,9 +217,20 @@ def tiktok_recommendations(
         "falling":   ["Spark Ads from organic UGC only"],
     }
 
-    hashtag_strategy = f"#{keyword.replace(' ', '')} + #trending + 2-3 niche hashtags"
+    # --- Live TikTok Creative Center enrichment (graceful fallback) ---
+    live_hashtags: list = []
+    live_sounds:   list = []
+    if config and tiktok_is_configured(config):
+        region = config.get("tiktok_api", {}).get("region", "US")
+        live_hashtags = get_trending_hashtags(keyword, region, config)
+        live_sounds   = get_trending_sounds(keyword, region, config)
 
-    return {
+    if live_hashtags:
+        hashtag_strategy = " ".join(f"#{h['hashtag_name']}" for h in live_hashtags[:5])
+    else:
+        hashtag_strategy = f"#{keyword.replace(' ', '')} + #trending + 2-3 niche hashtags"
+
+    result = {
         "platform":         "TikTok",
         "keyword":          keyword,
         "trend":            trend_label,
@@ -229,6 +243,14 @@ def tiktok_recommendations(
         "min_momentum_to_activate": 50,
         "activate":         momentum >= 50,
     }
+
+    if live_sounds:
+        result["trending_sounds"] = [
+            {"title": s["title"], "artist": s["artist"], "play_url": s["play_url"]}
+            for s in live_sounds[:5]
+        ]
+
+    return result
 
 
 # ── YouTube Recommendations ───────────────────────────────────────────────────
@@ -283,11 +305,13 @@ def full_platform_brief(
     geo: str,
     related_rising: Optional[list] = None,
     related_topics: Optional[list] = None,
+    config: Optional[dict] = None,
 ) -> dict:
     """
     Generate a complete cross-platform ad brief for one keyword + geo.
 
     Returns dict with recommendations for all 4 platforms.
+    Pass `config` to enable live TikTok Creative Center enrichment.
     """
     return {
         "keyword":   keyword,
@@ -297,7 +321,7 @@ def full_platform_brief(
         "platforms": {
             "google_ads": google_ads_recommendations(keyword, trend_label, momentum, geo, related_rising),
             "meta":       meta_recommendations(keyword, trend_label, momentum, geo, related_topics),
-            "tiktok":     tiktok_recommendations(keyword, trend_label, momentum, geo),
+            "tiktok":     tiktok_recommendations(keyword, trend_label, momentum, geo, config),
             "youtube":    youtube_recommendations(keyword, trend_label, momentum, geo),
         }
     }

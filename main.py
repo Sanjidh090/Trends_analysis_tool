@@ -6,6 +6,7 @@ Usage:
     python main.py --mode collect --keywords "fashion,smartphones,gaming" --geo US
     python main.py --mode collect   (uses seed keywords from config.yaml, all geos)
     python main.py --mode scheduler (runs automated daily/weekly jobs)
+    python main.py --mode migrate   (create/migrate database schema)
     streamlit run app.py            (launch dashboard)
 """
 
@@ -47,7 +48,7 @@ def run_collect(keywords: list, geo: str = None):
 
     orch    = GeoOrchestrator(config_path=CONFIG_PATH)
     results = orch.run(keywords=keywords, timeframes=["now 7-d"])
-    db      = TrendsDB(cfg["storage"]["db_path"])
+    db      = TrendsDB(cfg["storage"]["db_path"], db_config=cfg.get("database", {}))
 
     logger.info("Running signal processing...")
     geos = [geo] if geo else [g["code"] for g in cfg["geos"]]
@@ -78,9 +79,22 @@ def run_scheduler():
     _run()
 
 
+def run_migrate():
+    """Create / migrate the database schema (useful for initial PostgreSQL setup)."""
+    from db import TrendsDB
+    with open(CONFIG_PATH) as f:
+        cfg = yaml.safe_load(f)
+    db_config = cfg.get("database", {})
+    db_path   = cfg["storage"]["db_path"]
+    db = TrendsDB(db_path=db_path, db_config=db_config)
+    db_type = db_config.get("type", "sqlite")
+    logger.info(f"Migration complete | db_type={db_type}")
+    print(f"✅ Database schema created/verified ({db_type})")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Google Trends Intelligence Platform")
-    parser.add_argument("--mode",     choices=["collect", "scheduler"], default="collect")
+    parser.add_argument("--mode",     choices=["collect", "scheduler", "migrate"], default="collect")
     parser.add_argument("--keywords", type=str, help="Comma-separated keywords", default=None)
     parser.add_argument("--geo",      type=str, help="Single geo code e.g. US",  default=None)
     args = parser.parse_args()
@@ -95,3 +109,6 @@ if __name__ == "__main__":
 
     elif args.mode == "scheduler":
         run_scheduler()
+
+    elif args.mode == "migrate":
+        run_migrate()
